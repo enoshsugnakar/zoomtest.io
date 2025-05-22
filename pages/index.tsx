@@ -6,7 +6,7 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
       <h1 className="text-4xl font-extrabold mb-4 text-center">
-        Creative Interview MVP
+        Zoomtest.io MVP
       </h1>
       <p className="text-lg text-gray-700 mb-8 text-center max-w-2xl">
         A timed test brief platform for creative agencies. Upload your test

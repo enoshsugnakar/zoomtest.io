@@ -1,8 +1,6 @@
-// pages/index.tsx
-import React from 'react'
 import Link from 'next/link';
 
-export default function Home() {
+export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
       <h1 className="text-4xl font-extrabold mb-4 text-center">

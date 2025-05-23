@@ -2,76 +2,108 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Question, QuestionType } from '@/app/types/schema';
-import { supabase } from '@/lib/supabaseClient';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+
+type QuestionType = 'multiple_choice' | 'behavioral';
+
+interface Question {
+  id: string;
+  test_id: string;
+  question_text: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  order_number: number;
+  type: QuestionType;
+  created_at: string;
+}
+
+interface NewQuestion {
+  question_text: string;
+  type: QuestionType;
+  options: string[];
+  correct_answer: string;
+}
 
 export default function QuestionsPage({
-  params,
+  params
 }: {
-  params: { testId: string };
+  params: { testId: string }
 }) {
   const router = useRouter();
+  const supabase = createClientComponentClient();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
-  const [newQuestion, setNewQuestion] = useState({
+  const [error, setError] = useState('');
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [newQuestion, setNewQuestion] = useState<NewQuestion>({
     question_text: '',
-    type: 'multiple_choice' as QuestionType,
+    type: 'multiple_choice',
     options: ['', '', '', ''],
     correct_answer: '',
   });
-  const [error, setError] = useState('');
 
   useEffect(() => {
     loadQuestions();
-  }, [params.testId]);
+  }, []);
 
   async function loadQuestions() {
-    const { data: questions, error } = await supabase
-      .from('questions')
-      .select('*')
-      .eq('test_id', params.testId)
-      .order('order_number');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/auth/login');
+        return;
+      }
 
-    if (error) {
-      setError('Failed to load questions');
-      console.error(error);
-    } else {
-      setQuestions(questions || []);
+      const { data, error } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('test_id', params.testId)
+        .order('order_number');
+
+      if (error) throw error;
+      setQuestions(data || []);
+    } catch (err: any) {
+      console.error('Error loading questions:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-  async function handleAddQuestion() {
-    if (!newQuestion.question_text.trim()) {
-      setError('Question text is required');
-      return;
-    }
+  async function handleAddQuestion(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
 
-    if (
-      newQuestion.type === 'multiple_choice' &&
-      (!newQuestion.options.some(opt => opt.trim()) || !newQuestion.correct_answer)
-    ) {
-      setError('Multiple choice questions require at least one option and a correct answer');
-      return;
-    }
+    try {
+      if (!newQuestion.question_text.trim()) {
+        throw new Error('Question text is required');
+      }
 
-    const { data, error } = await supabase
-      .from('questions')
-      .insert({
-        test_id: params.testId,
-        question_text: newQuestion.question_text,
-        type: newQuestion.type,
-        options: newQuestion.type === 'multiple_choice' ? newQuestion.options.filter(opt => opt.trim()) : null,
-        correct_answer: newQuestion.type === 'multiple_choice' ? newQuestion.correct_answer : null,
-        order_number: questions.length + 1,
-      })
-      .select()
-      .single();
+      if (newQuestion.type === 'multiple_choice') {
+        if (!newQuestion.options.every(opt => opt.trim())) {
+          throw new Error('All options must be filled');
+        }
+        if (!newQuestion.correct_answer) {
+          throw new Error('Select the correct answer');
+        }
+      }
 
-    if (error) {
-      setError('Failed to add question');
-      console.error(error);
-    } else {
+      const { data, error } = await supabase
+        .from('questions')
+        .insert({
+          test_id: params.testId,
+          question_text: newQuestion.question_text.trim(),
+          type: newQuestion.type,
+          options: newQuestion.type === 'multiple_choice' ? newQuestion.options : null,
+          correct_answer: newQuestion.type === 'multiple_choice' ? newQuestion.correct_answer : null,
+          order_number: questions.length,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
       setQuestions([...questions, data]);
       setNewQuestion({
         question_text: '',
@@ -79,127 +111,194 @@ export default function QuestionsPage({
         options: ['', '', '', ''],
         correct_answer: '',
       });
-      setError('');
+    } catch (err: any) {
+      console.error('Error adding question:', err);
+      setError(err.message);
     }
   }
 
-  if (loading) return <div className="p-8">Loading...</div>;
+  async function handleFinalizeTest() {
+    setIsFinalizing(true);
+    setError('');
+
+    try {
+      if (questions.length === 0) {
+        throw new Error('Add at least one question before finalizing');
+      }
+
+      const { error: updateError } = await supabase
+        .from('tests')
+        .update({ 
+          status: 'active',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', params.testId);
+
+      if (updateError) throw updateError;
+      router.push(`/dashboard/${params.testId}`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsFinalizing(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto p-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+          <div className="h-32 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-4xl mx-auto p-8 space-y-8">
-      <h1 className="text-2xl font-bold">Manage Questions</h1>
-
-      {/* New Question Form */}
-      <div className="border rounded-lg p-6 space-y-4 bg-white">
-        <h2 className="text-xl font-semibold">Add New Question</h2>
-        
-        <div>
-          <label className="block text-sm font-medium mb-1">Question Type</label>
-          <select
-            value={newQuestion.type}
-            onChange={(e) => setNewQuestion({
-              ...newQuestion,
-              type: e.target.value as QuestionType,
-              options: e.target.value === 'multiple_choice' ? ['', '', '', ''] : [],
-              correct_answer: '',
-            })}
-            className="w-full border rounded px-3 py-2"
-          >
-            <option value="multiple_choice">Multiple Choice</option>
-            <option value="behavioral">Behavioral</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">Question Text</label>
-          <textarea
-            value={newQuestion.question_text}
-            onChange={(e) => setNewQuestion({ ...newQuestion, question_text: e.target.value })}
-            className="w-full border rounded px-3 py-2 min-h-[100px]"
-            placeholder="Enter your question here..."
-          />
-        </div>
-
-        {newQuestion.type === 'multiple_choice' && (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Options</label>
-              {newQuestion.options.map((option, index) => (
-                <input
-                  key={index}
-                  type="text"
-                  value={option}
-                  onChange={(e) => {
-                    const newOptions = [...newQuestion.options];
-                    newOptions[index] = e.target.value;
-                    setNewQuestion({ ...newQuestion, options: newOptions });
-                  }}
-                  className="w-full border rounded px-3 py-2 mb-2"
-                  placeholder={`Option ${index + 1}`}
-                />
-              ))}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Correct Answer</label>
-              <select
-                value={newQuestion.correct_answer}
-                onChange={(e) => setNewQuestion({ ...newQuestion, correct_answer: e.target.value })}
-                className="w-full border rounded px-3 py-2"
-              >
-                <option value="">Select correct answer</option>
-                {newQuestion.options.map((option: string, index: number) => (
-                  option && (
-                    <option key={index} value={option}>
-                      {option}
-                    </option>
-                  )
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
-
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-
+    <div className="max-w-4xl mx-auto p-8">
+      <div className="flex items-center justify-between mb-6">
         <button
-          onClick={handleAddQuestion}
-          className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700"
+          onClick={() => router.push(`/dashboard/${params.testId}`)}
+          className="text-blue-600 hover:underline"
         >
-          Add Question
+          ← Back to Test
+        </button>
+        <button
+          onClick={handleFinalizeTest}
+          disabled={isFinalizing || questions.length === 0}
+          className={`px-4 py-2 rounded ${
+            questions.length === 0
+              ? 'bg-gray-300 cursor-not-allowed'
+              : 'bg-green-600 hover:bg-green-700 text-white'
+          }`}
+        >
+          {isFinalizing ? 'Saving...' : 'Save and Create Test'}
         </button>
       </div>
 
-      {/* Existing Questions List */}
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Existing Questions</h2>
-        {questions.map((question, index) => (
-          <div key={question.id} className="border rounded-lg p-4 bg-white">
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-sm text-gray-500">Question {index + 1}</span>
-                <p className="font-medium">{question.question_text}</p>
-              </div>
-              <span className="px-2 py-1 bg-gray-100 rounded text-sm">
-                {question.type}
+      <div className="space-y-6">
+        <div className="bg-white rounded-lg p-4 border">
+          <h1 className="text-2xl font-bold">Test Questions</h1>
+          <p className="text-gray-600 mt-2">
+            {questions.length} question{questions.length !== 1 ? 's' : ''} added
+          </p>
+        </div>
+
+        {questions.map((q, index) => (
+          <div key={q.id} className="bg-white rounded-lg p-6 border">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="font-medium">Question {index + 1}</h3>
+              <span className="text-sm text-gray-500">
+                {q.type === 'multiple_choice' ? 'Multiple Choice' : 'Behavioral'}
               </span>
             </div>
-            
-            {question.type === 'multiple_choice' && question.options && (
-              <div className="mt-2 space-y-1">
-                {question.options.map((option: string, optIndex: number) => (
+            <p className="text-lg mb-4">{q.question_text}</p>
+            {q.type === 'multiple_choice' && q.options && (
+              <div className="space-y-2 pl-4">
+                {q.options.map((option, i) => (
                   <div 
-                    key={optIndex}
-                    className={`text-sm ${option === question.correct_answer ? 'text-green-600 font-medium' : 'text-gray-600'}`}
+                    key={i}
+                    className={`p-2 rounded ${
+                      option === q.correct_answer 
+                        ? 'bg-green-50 border-green-200 border' 
+                        : ''
+                    }`}
                   >
-                    {option === question.correct_answer ? '✓ ' : ''}
+                    <span className="inline-block w-6">{String.fromCharCode(65 + i)}.</span>
                     {option}
+                    {option === q.correct_answer && (
+                      <span className="ml-2 text-green-600 text-sm">(Correct)</span>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
         ))}
+
+        <div className="bg-white rounded-lg p-6 border">
+          <h2 className="text-xl font-semibold mb-4">Add New Question</h2>
+          <form onSubmit={handleAddQuestion} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Question Type</label>
+              <select
+                value={newQuestion.type}
+                onChange={(e) => setNewQuestion(prev => ({
+                  ...prev,
+                  type: e.target.value as QuestionType,
+                  options: e.target.value === 'behavioral' ? [] : prev.options,
+                  correct_answer: e.target.value === 'behavioral' ? '' : prev.correct_answer
+                }))}
+                className="w-full border rounded p-2"
+              >
+                <option value="multiple_choice">Multiple Choice</option>
+                <option value="behavioral">Behavioral</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Question Text</label>
+              <textarea
+                value={newQuestion.question_text}
+                onChange={(e) => setNewQuestion(prev => ({
+                  ...prev,
+                  question_text: e.target.value
+                }))}
+                className="w-full border rounded p-2 h-24"
+                placeholder="Enter your question here"
+              />
+            </div>
+
+            {newQuestion.type === 'multiple_choice' && (
+              <div>
+                <label className="block text-sm font-medium mb-2">Options</label>
+                <div className="space-y-2">
+                  {newQuestion.options.map((opt, i) => (
+                    <div key={i} className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        name="correct"
+                        checked={opt === newQuestion.correct_answer}
+                        onChange={() => setNewQuestion(prev => ({
+                          ...prev,
+                          correct_answer: opt
+                        }))}
+                        className="mt-1"
+                      />
+                      <input
+                        type="text"
+                        value={opt}
+                        onChange={(e) => {
+                          const newOptions = [...newQuestion.options];
+                          newOptions[i] = e.target.value;
+                          setNewQuestion(prev => ({
+                            ...prev,
+                            options: newOptions
+                          }));
+                        }}
+                        className="flex-1 border rounded p-2"
+                        placeholder={`Option ${String.fromCharCode(65 + i)}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="text-red-500 text-sm">{error}</div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                Add Question
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );

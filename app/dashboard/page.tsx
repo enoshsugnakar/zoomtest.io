@@ -54,7 +54,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">Your Tests</h1>
         <div className="space-x-4">
           <button
-            onClick={() => router.push('/new-test')}
+            onClick={() => router.push('/dashboard/create-test')}
             className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
           >
             Create New Test

@@ -80,7 +80,7 @@ export default function DashboardPage() {
           tests.map((test) => (
             <div
               key={test.id}
-              onClick={() => router.push(`/dashboard/${test.id}`)}
+              onClick={() => router.push(`/dashboard/tests/${test.id}`)}
               className="border rounded-lg p-6 bg-white hover:shadow-md transition-shadow cursor-pointer"
             >
               <div className="flex justify-between items-start">
